@@ -33,7 +33,21 @@ module Nokogiri
           subclasses_selector = if node.subclasses.nil? || node.subclasses.empty?
             EMPTY_STRING
           else
-            "[" + node.subclasses.map { |subclass| accept(subclass) }.join(" and ") + "]"
+            filters = ["["]
+            node.subclasses.each_with_index do |subclass, j|
+              if j > 0
+                # TODO: this seems bogus to me? I'd like to investigate doing something either more
+                # consistent or more nuanced.
+                if PseudoClassSelector === subclass && PseudoClassFunction === subclass.value
+                  filters << "]["
+                else
+                  filters << " and "
+                end
+              end
+              filters << accept(subclass)
+            end
+            filters << "]"
+            filters.join
           end
 
           type_selector + subclasses_selector
@@ -117,11 +131,15 @@ module Nokogiri
               raise Nokogiri::CSS::SyntaxError, "Unexpected arguments to #{node.name}()"
             end
 
-            "position()=99" # TODO: OBVIOUSLY WRONG
+            attr_select_nth(node.arguments.first)
           # when "nth-child"
           #   # TODO
-          # when "nth-last-of-type"
-          #   # TODO
+          when "nth-last-of-type"
+            unless node.arguments.size == 1 && ANPlusB === node.arguments.first
+              raise Nokogiri::CSS::SyntaxError, "Unexpected arguments to #{node.name}()"
+            end
+
+            attr_select_nth_last_of_type(node.arguments.first)
           # when "nth-last-child"
           #   # TODO
           # when "first", "first-of-type"
@@ -190,6 +208,8 @@ module Nokogiri
             "@#{accept(node.name)}"
           when XPathFunction
             accept(node.matcher)
+          when NumberToken
+            attr_select_nth_child(node.matcher.value)
           when AttributeSelectorMatcher
             case node.matcher.matcher
             when AttrMatcher::IncludeWord
@@ -231,6 +251,27 @@ module Nokogiri
         # ----------
         # Helpers
         # ----------
+
+        def attr_select_nth_child(n)
+          "count(preceding-sibling::*)=#{n - 1}"
+        end
+
+        def attr_select_nth(anpb)
+          unless anpb.a == 0
+            raise Nokogiri::CSS::SyntaxError, "Unsupported 'A' value in nth: #{anpb}"
+          end
+
+          "position()=#{anpb.b}"
+        end
+
+        def attr_select_nth_last_of_type(anpb)
+          index = anpb.b - 1
+          if index == 0
+            "position()=last()"
+          else
+            "position()=last()-#{index}"
+          end
+        end
 
         def quote_accept(node)
           case node
